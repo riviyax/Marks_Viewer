@@ -290,7 +290,8 @@ Ready to serve commands.
 
         const aboutText = `
 ╭─「 *About ${BOT_NAME}* 」
-│ *Developer:* Rivith Abinidu & Disidu Themika
+│ *Developer:* Rivith Abinidu
+│ *Maintain by:* Disindu Themika
 │
 │ *Bot Status:*
 │       Uptime: ${uptime}
