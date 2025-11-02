@@ -347,7 +347,7 @@ Ready to serve commands.
 │🎖️ *Rank:* ${user.rank || "N/A"}
 │🏆 *Marks:* ${user.marks ?? "N/A"}
 │
-│🔗 *Activity Logs:* │   ${API_BASE_URL}/memberview?id=${user._id}
+│🔗 *Activity Logs:* │   https://mmumarks.vercel.app/memberview?id=${user._id}
 ${lastUpdatedFormatted}
 │
 │ Developed by *Rivith Abinidu (Riviya_X)*
