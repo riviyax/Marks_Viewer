@@ -7,7 +7,7 @@ import makeWASocket, {
 import P from "pino";
 import fs from "fs";
 import axios from "axios";
-import os from "os";
+import os from "os"; // 👈 NEW: Import for system info
 
 // ----------------- CONFIG -----------------
 const BOT_NAME = "MMU Marks Viewer Bot";
@@ -20,49 +20,17 @@ const SPAM_WINDOW_MS = 2 * 60 * 1000;
 const SPAM_MAX = 6;
 const AUTO_UNBLOCK_MS = 10 * 60 * 1000;
 const API_BASE_URL = "https://marks.vercel.app";
-
-const AUTHORIZED_FILE_PATH = "./authorized_users.json";
 // ------------------------------------------
 
 const startTimestamp = Date.now();
-let authorizedUsers = [];
 
-// =============== ACCESS CONTROL & SPAM TRACKER ===================
+// =============== SPAM TRACKER ===================
 const spamMap = new Map();
 
-/**
- * Loads the list of authorized JIDs from the JSON file.
- * @returns {string[]} An array of authorized JIDs.
- */
-function loadAuthorizedUsers() {
-  try {
-    if (fs.existsSync(AUTHORIZED_FILE_PATH)) {
-      const data = fs.readFileSync(AUTHORIZED_FILE_PATH, "utf-8");
-      return JSON.parse(data);
-    }
-  } catch (e) {
-    console.error("Error loading authorized users:", e.message);
-  }
-  return [];
-}
-
-/**
- * Saves the list of authorized JIDs to the JSON file.
- * @param {string[]} users - The array of authorized JIDs.
- */
-function saveAuthorizedUsers(users) {
-  try {
-    fs.writeFileSync(AUTHORIZED_FILE_PATH, JSON.stringify(users, null, 2), "utf-8");
-  } catch (e) {
-    console.error("Error saving authorized users:", e.message);
-  }
-}
-
-// ⭐ FIX: Check against OWNER_JID passed as a parameter
-function handleSpam(user, ownerJid) {
-  // If the user is the owner, immediately return false (not blocked/no spam)
-  if (user === ownerJid) {
-    return false;
+function handleSpam(user) {
+  // ⭐ FIX: Bypass spam check for the owner
+  if (user === OWNER_JID) {
+      return false; 
   }
 
   const now = Date.now();
@@ -164,10 +132,6 @@ function safeReadImage(path) {
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState("./session");
   const { version } = await fetchLatestBaileysVersion();
-  
-  // Load authorized users on startup
-  authorizedUsers = loadAuthorizedUsers();
-  console.log(`Loaded ${authorizedUsers.length} authorized JIDs.`);
 
   const sock = makeWASocket({
     version,
@@ -181,9 +145,10 @@ async function startBot() {
   });
 
   sock.ev.on("creds.update", saveCreds);
-
-  // AGGRESSIVE PAIR CODE GENERATION ON STARTUP (Unchanged)
+  
+  // ⭐ AGGRESSIVE PAIR CODE GENERATION ON STARTUP
   if (!state.creds.registered) {
+    // Wait a short delay (3s) to allow the socket to initialize before request
     await new Promise(resolve => setTimeout(resolve, 3000)); 
     
     const phone = OWNER_NUMBER.replace(/[^0-9]/g, "");
@@ -205,9 +170,10 @@ async function startBot() {
         console.log("HINT: Try deleting /session again and restarting, or use a stable network/VPN.");
     }
   }
+  // END OF AGGRESSIVE PAIR CODE GENERATION
 
 
-  // Connection handling (Unchanged)
+  // Connection handling
   sock.ev.on("connection.update", async (update) => {
     const { connection, lastDisconnect } = update;
     
@@ -252,34 +218,14 @@ Version: ${version.join(".")}
       const from = msg.key.remoteJid;
       if (!from.includes("@")) return;
 
-      const senderJid = msg.key.participant || from; 
-
       const textMsg =
         msg.message.conversation ||
         msg.message.extendedTextMessage?.text ||
         msg.message.imageMessage?.caption ||
         "";
 
-      const parts = textMsg.trim().split(/\s+/);
-      const command = parts[0].toLowerCase();
-      
-      // ⭐ FIX: Determine ownership early using the correct JID
-      const isOwner = senderJid === OWNER_JID;
-
-      // Access Control Guard
-      const isAuthorized = authorizedUsers.includes(from);
-      
-      // Only the owner can use !addme
-      if (command !== "!addme") {
-          if (!isOwner && !isAuthorized) {
-              return; // Non-authorized users/groups are silently ignored
-          }
-      }
-
-
-      // SPAM CHECK 
-      // ⭐ FIX: Pass OWNER_JID to the handleSpam function
-      const isBlocked = handleSpam(from, OWNER_JID);
+      // SPAM CHECK (Now excludes OWNER_JID)
+      const isBlocked = handleSpam(from);
       const spamData = spamMap.get(from);
 
       if (isBlocked) {
@@ -306,38 +252,13 @@ Version: ${version.join(".")}
         }
         return;
       }
-      
-      // Continue processing commands only if not spam-blocked/ignored
+
+      const parts = textMsg.trim().split(/\s+/);
+      const command = parts[0].toLowerCase();
       const sub = parts[1]?.toLowerCase();
       const third = parts[2];
 
-      // ---------------- !addme (OWNER ONLY) ----------------
-      if (command === "!addme") {
-        if (!isOwner) {
-           return sock.sendMessage(from, { text: "🚫 This command can only be used by the bot owner." });
-        }
-        
-        const chatJid = from; 
-
-        if (authorizedUsers.includes(chatJid)) {
-            // REMOVE
-            authorizedUsers = authorizedUsers.filter(jid => jid !== chatJid);
-            saveAuthorizedUsers(authorizedUsers);
-            return sock.sendMessage(from, { 
-                text: `✅ Access revoked for this chat (JID: ${chatJid}). Commands will no longer work here. Total authorized chats: *${authorizedUsers.length}*.` 
-            });
-        } else {
-            // ADD
-            authorizedUsers.push(chatJid);
-            saveAuthorizedUsers(authorizedUsers);
-            return sock.sendMessage(from, { 
-                text: `✅ Access granted for this chat (JID: ${chatJid}). Commands are now active here. Total authorized chats: *${authorizedUsers.length}*.` 
-            });
-        }
-      }
-
-
-      // ---------------- !host ----------------
+      // ---------------- !host (NEW COMMAND) ----------------
       if (command === "!host") {
         const api = await checkApiStatus();
         const uptime = msToTime(Date.now() - startTimestamp);
@@ -351,7 +272,7 @@ Version: ${version.join(".")}
         const hostText = `
 ╭─「 🖥️ Host & Server Status 」
 │ ⏱️ Bot Uptime: *${uptime}*
-│ 🌐 API Status: ${api.status ? "✅ Online" : "❌ Offline"}
+│ 🌐 API Status: ✅ Online
 │ 
 │ 🧠 RAM Usage: *${usedMemory}GB / ${totalMemory}GB*
 │ ⚙️ CPU Load (1m): *${cpuUsage}%*
@@ -395,7 +316,7 @@ I'm here to fetch the latest MMU marks for you.
 │ 🛠️ Maintainer: Disindu Themika
 │ ⏱️ Uptime: ${uptime}
 │ 🔗 API: ${API_BASE_URL}
-│ 🟢 Status: ${api.status ? "✅ Online" : "❌ Offline"}
+│ 🟢 Status: ✅ Online
 │ ⚡ Latency: ${api.latency}
 ╰──────────●●►
         `.trim();
